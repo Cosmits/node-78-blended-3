@@ -1,6 +1,7 @@
 const jwt = require("jsonwebtoken");
+const userModel = require("../models/userModel");
 
-module.exports = (req, res, next) => {
+module.exports = async (req, res, next) => {
   try {
     // 1. Отримуємо токен
     // 2. Розшифровуємо токен
@@ -10,8 +11,12 @@ module.exports = (req, res, next) => {
 
     const [type, token] = req.headers.authorization.split(" ");
     if (type === "Bearer" && token) {
-      const decodet = jwt.verify(token, "cat");
-      req.user = decodet;
+      const decoded = jwt.verify(token, "cat");
+      // req.user = decoded;
+
+      const currentUser = await userModel.findById(decoded.id);
+      req.user = currentUser;
+
       next();
     }
   } catch (error) {

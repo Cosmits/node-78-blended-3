@@ -8,6 +8,8 @@ const userModel = require("./models/userModel");
 const roleModel = require("./models/roleModel");
 const authmiddlewares = require("./middlewares/authmiddlewares");
 
+const gravatar = require("gravatar");
+
 const configPath = path.join(__dirname, "..", "config", ".env");
 
 require("colors");
@@ -20,14 +22,14 @@ const app = express();
 app.use(express.urlencoded({ extended: false }));
 app.use(express.json());
 
-app.use("/api/v1", require("./routes/ordersRoutes"));
+// app.use("/users", require("./routes/ordersRoutes"));
 // Реєстрація це збереження користувача в базу
 // Аутентифікація - перевірка співпадіння введених користувачем даних із тими що є базі
 // Ауторизація - перевірка прав доступу
 // Logout (розлогіненя) - скасування прав доступу (вихід із системи)
 
 app.post(
-  "/register",
+  "/users/signup",
   asyncHandler(async (req, res) => {
     // 1. Отримуємо і валідуємо дані від користувача
     // 2. Шукаємо користувача в базі
@@ -35,8 +37,8 @@ app.post(
     // 4. Якщо не знайшли - хешуємо пароль
     // 5. Зберігаємо користувача в базу із захешованим паролем
 
-    const { email, password } = req.body;
-    if (!email || !password) {
+    const { name, email, password } = req.body;
+    if (!email || !password || !name) {
       res.status(400);
       throw new Error("Provide all fields");
     }
@@ -46,27 +48,44 @@ app.post(
       res.status(400);
       throw new Error("User already exists");
     }
-    const hashPasswort = bcrypt.hashSync(password, 5);
-    const roles = await roleModel.findOne({ value: "USER" });
 
-    console.log("hashPasswort: ", hashPasswort);
+    const avatar = gravatar.url(name);
+    const newUser = new userModel({ name, email, avatar });
 
-    const user = await userModel.create({
-      ...req.body,
-      password: hashPasswort,
-      roles: [roles.value],
-    });
+    await newUser.hashPassword(password);
+    await newUser.save();
+
+
+    const payload = { id: newUser._id }
+    const token = jwt.sign(payload, "cat", { expiresIn: "12h" });
+
+    await userModel.findByIdAndUpdate(newUser._id, { token });
     res.status(201).json({
-      code: 201,
-      data: {
-        email: user.email,
-      },
-    });
+      user: { name, email, avatar },
+      token,
+    })
+
+    // const hashPassword = bcrypt.hashSync(password, 5);
+    // const roles = await roleModel.findOne({ value: "USER" });
+
+    // console.log("hashPassword: ", hashPassword);
+
+    // const user = await userModel.create({
+    //   ...req.body,
+    //   password: hashPassword,
+    //   roles: [roles.value],
+    // });
+    // res.status(201).json({
+    //   code: 201,
+    //   data: {
+    //     email: user.email,
+    //   },
+    // });
   })
 );
 
 app.post(
-  "/login",
+  "/users/login",
   asyncHandler(async (req, res) => {
     // 1. Отримуємо і валідуємо дані від користувача
     // 2. Шукаємо користувача в базі і розшифровуємо пароль
@@ -86,34 +105,42 @@ app.post(
       throw new Error("Невірний логін або пароль");
     }
 
-    const isValidPasswort = bcrypt.compareSync(password, candidate.password);
-    if (!isValidPasswort) {
+    // const isValidPasswort = bcrypt.compareSync(password, candidate.password);
+    const isValidPassword = candidate.comparePassword(password);
+    if (!isValidPassword) {
       res.status(400);
       throw new Error("Невірний логін або пароль");
     }
 
-    const token = generateToken({
-      friends: ["Serhii", "Ira", "Hena"],
-      id: candidate._id,
-      roles: candidate.roles,
-    });
+    // const token = generateToken({
+    //   friends: ["Serhii", "Ira", "Hena"],
+    //   id: candidate._id,
+    //   roles: candidate.roles,
+    // });
 
-    candidate.token = token;
+    const payload = { id: candidate._id }
+    const token = jwt.sign(payload, "cat", { expiresIn: "12h" });
 
-    await candidate.save();
+    await userModel.findByIdAndUpdate(candidate._id, { token });
+    res.json({
+      user: { name: candidate.name, email, avatar: candidate.avatar },
+      token,
+    })
 
-    res.status(200).json({
-      code: 200,
-      data: {
-        email: candidate.email,
-        token: candidate.token,
-      },
-    });
+
+    // await candidate.save();
+    // res.status(200).json({
+    //   code: 200,
+    //   data: {
+    //     email: candidate.email,
+    //     token: candidate.token,
+    //   },
+    // });
   })
 );
 
-app.patch(
-  "/logout",
+app.post(
+  "/users/logout",
   authmiddlewares,
   asyncHandler(async (req, res) => {
     const { id } = req.user;
@@ -126,6 +153,19 @@ app.patch(
     });
   })
 );
+
+app.get("/users/current",
+  authmiddlewares,
+  (req, res) => {
+    const { name, email, avatar } = req.user
+    console.log("🚀 ~ file: server.js:161 ~ req.user:", req)
+    res.json({
+      name,
+      email,
+      avatar,
+    })
+  }
+)
 
 function generateToken(data) {
   const payload = { ...data };
